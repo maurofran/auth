@@ -2,15 +2,20 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/maurofran/auth/internal/ports/adapters/db"
+	"github.com/maurofran/auth/internal/ports/adapters/db/migrate"
+	"github.com/maurofran/auth/internal/ports/adapters/grpc/iam"
+	"github.com/maurofran/auth/internal/ports/adapters/oidc"
 	"github.com/maurofran/kernel/server"
+	"github.com/spf13/cobra"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
-
-	"github.com/spf13/cobra"
 )
 
 var grpcCmd = &cobra.Command{
@@ -20,35 +25,44 @@ var grpcCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(context.Background())
 		var wg sync.WaitGroup
 
-		/*
-				driver, dsn := dbConfig()
-				redis := redisConfig()
-				c, err := container.New(driver, dsn, redis)
-				cobra.CheckErr(err)
+		conn, err := setupDatabase(ctx)
+		cobra.CheckErr(err)
 
-				if shouldMigrate() {
-					slog.Debug("Executing database migrations")
+		if config.DB.Migrate.Enabled {
+			err = migrateDatabase(ctx, conn)
+			cobra.CheckErr(err)
+		}
 
-					err = c.Migrate()
-					cobra.CheckErr(err)
-				}
+		slog.DebugContext(ctx, "Creating repositories")
 
-			forwarder := c.Forwarder()
+		authnSessionManager := db.NewAuthnSessionManager(conn)
+		clientManager := db.NewClientManager(conn)
+		grantSessionManager := db.NewGrantSessionManager(conn)
+		sessionStore := db.NewSessionStore(conn)
 
-			go func() {
-				wg.Add(1)
-				if err := forwarder.Run(ctx); err != nil {
-					slog.Error("Unexpected error running forwarder", slog.Any("err", err))
-				}
-				wg.Done()
-			}()
-		*/
+		slog.DebugContext(ctx, "Creating IAM authentication policy")
+
+		policy, err := iam.Policy(config.Oidc.Issuer, sessionStore, nil)
+		cobra.CheckErr(err)
+
+		slog.DebugContext(ctx, "Creating OIDC prvider")
+
+		provider, err := oidc.NewProvider(
+			config.Oidc,
+			clientManager,
+			grantSessionManager,
+			authnSessionManager,
+			policy,
+		)
+		cobra.CheckErr(err)
 
 		go server.RunHTTP(
 			ctx,
 			&wg,
 			func(server *http.ServeMux) {
-				slog.Info("Registering routes to HTTP server")
+				slog.InfoContext(ctx, "Registering OIDC routes to HTTP server")
+
+				server.Handle("/", provider.Handler())
 			},
 			config.Server,
 		)
@@ -56,14 +70,37 @@ var grpcCmd = &cobra.Command{
 		signalCh := make(chan os.Signal, 1)
 		signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
 		<-signalCh
-		/*if err := forwarder.Close(); err != nil {
-			slog.Error("Unexpected error closing forwarder", slog.Any("err", err))
-		}*/
+
 		cancel()
 		wg.Wait()
 
 		slog.Info("Shutdown completed")
 	},
+}
+
+func setupDatabase(ctx context.Context) (*sql.DB, error) {
+	dsn := config.DB.Dsn()
+
+	slog.DebugContext(ctx, "Connecting to database", slog.String("dsn", dsn))
+
+	conn, err := sql.Open(config.DB.Driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if config.DB.Ping {
+		slog.DebugContext(ctx, "Pinging database")
+
+		if err := conn.Ping(); err != nil {
+			return nil, err
+		}
+	}
+	return conn, nil
+}
+
+func migrateDatabase(ctx context.Context, db *sql.DB) error {
+	slog.DebugContext(ctx, "Migrating database")
+
+	return migrate.Run(db, &config.DB.Migrate)
 }
 
 func init() {
