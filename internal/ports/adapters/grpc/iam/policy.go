@@ -8,6 +8,7 @@ import (
 	"github.com/luikyv/go-oidc/pkg/goidc"
 	"github.com/maurofran/auth/internal/domain/session"
 	"github.com/maurofran/iam/pkg/protobuf"
+	"github.com/maurofran/kernel/logger"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -47,7 +48,7 @@ var templates embed.FS
 func Policy(issuer string, sessionStore session.Store, client protobuf.IdentityServiceClient) (goidc.AuthnPolicy, error) {
 	tpls, err := template.ParseFS(templates, "templates/*.gohtml")
 	if err != nil {
-		slog.Error("Error parsing templates", slog.Any("error", err))
+		slog.Error("Error parsing templates", slog.Any(logger.ErrorKey, err))
 
 		return goidc.AuthnPolicy{}, err
 	}
@@ -145,14 +146,14 @@ func (a *Authenticator) loadUser(req *http.Request, session *goidc.AuthnSession)
 
 	cookie, err := req.Cookie(userSessionIDCookie)
 	if err != nil {
-		slog.WarnContext(ctx, "No user session cookie found", slog.Any("error", err))
+		slog.WarnContext(ctx, "No user session cookie found", slog.Any(logger.ErrorKey, err))
 
 		return goidc.StatusSuccess, nil
 	}
 
 	userSession, err := a.sessionStore.Get(ctx, cookie.Value)
 	if err != nil {
-		slog.ErrorContext(ctx, "Error retrieving user session", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Error retrieving user session", slog.Any(logger.ErrorKey, err))
 
 		return goidc.StatusFailure, err
 	} else if userSession == nil {
@@ -227,7 +228,7 @@ func (a *Authenticator) createUserSession(w http.ResponseWriter, req *http.Reque
 		AuthTime: authnSession.StoredParameter(authTimeParam).(int),
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "Error creating user session", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Error creating user session", slog.Any(logger.ErrorKey, err))
 
 		return goidc.StatusFailure, err
 	}
@@ -245,7 +246,7 @@ func (a *Authenticator) grantConsent(w http.ResponseWriter, req *http.Request, s
 	ctx := req.Context()
 
 	if err := req.ParseForm(); err != nil {
-		slog.ErrorContext(ctx, "Error parsing form", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Error parsing form", slog.Any(logger.ErrorKey, err))
 
 		return goidc.StatusFailure, err
 	}
@@ -276,7 +277,7 @@ func (a *Authenticator) finishFlow(req *http.Request, session *goidc.AuthnSessio
 	}
 	response, err := a.client.GetUser(ctx, request)
 	if err != nil {
-		slog.ErrorContext(ctx, "Error retrieving user", slog.Any("error", err))
+		slog.ErrorContext(ctx, "Error retrieving user", slog.Any(logger.ErrorKey, err))
 
 		return goidc.StatusFailure, err
 	}

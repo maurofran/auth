@@ -1,9 +1,20 @@
 package oidc
 
 import (
+	"context"
+	"crypto/tls"
+	"embed"
 	"github.com/luikyv/go-oidc/pkg/goidc"
 	"github.com/luikyv/go-oidc/pkg/provider"
+	"github.com/maurofran/kernel/logger"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"slices"
 )
+
+//go:embed templates/*.gohtml
+var templates embed.FS
 
 var claims = []string{
 	goidc.ClaimEmail, goidc.ClaimEmailVerified, goidc.ClaimPhoneNumber,
@@ -25,7 +36,7 @@ func NewProvider(
 	return provider.New(
 		goidc.ProfileOpenID,
 		config.Issuer,
-		config.PrivateJWKSFunc(),
+		config.privateJWKSFunc(),
 		provider.WithScopes(allScopes...),
 		provider.WithIDTokenSignatureAlgs(goidc.RS256, goidc.None),
 		provider.WithUserInfoSignatureAlgs(goidc.RS256, goidc.None),
@@ -46,19 +57,69 @@ func NewProvider(
 		provider.WithImplicitGrant(),
 		provider.WithAuthorizationCodeGrant(),
 		provider.WithClientCredentialsGrant(),
-		provider.WithRefreshTokenGrant(nil, 600), // authutil.IssueRefreshToken
+		provider.WithRefreshTokenGrant(ShouldIssueRefreshToken, 600),
 		provider.WithClaims(claims[0], claims...),
 		provider.WithACRs(acrs[0], acrs...),
-		// provider.WithDCR(authutil.DCRFunc, authutil.ValidateInitialTokenFunc),
-		// provider.WithTokenOptions(authutil.TokenOptionsFunc(goidc.RS256)),
-		// provider.WithHTTPClientFunc(authutil.HTTPClient),
+		provider.WithDCR(dcrHandler, dcrValidator),
+		provider.WithTokenOptions(TokenOptions(goidc.RS256)),
+		provider.WithHTTPClientFunc(HttpClient),
 		provider.WithPolicy(policy),
-		// provider.WithNotifyErrorFunc(authutil.ErrorLoggingFunc),
-		// provider.WithRenderErrorFunc(authutil.RenderError(templatesDirPath)),
+		provider.WithNotifyErrorFunc(LogError),
+		provider.WithRenderErrorFunc(RenderError()),
 		provider.WithDisplayValues(displayValues[0], displayValues...),
 		provider.WithSubIdentifierTypes(goidc.SubIdentifierPublic, goidc.SubIdentifierPairwise),
 		provider.WithClientStorage(clientStorage),
 		provider.WithGrantSessionStorage(grantSessionStorage),
 		provider.WithAuthnSessionStorage(authnSessionManager),
 	)
+}
+
+func ShouldIssueRefreshToken(client *goidc.Client, _ goidc.GrantInfo) bool {
+	return slices.Contains(client.GrantTypes, goidc.GrantRefreshToken)
+}
+
+func TokenOptions(alg goidc.SignatureAlgorithm) goidc.TokenOptionsFunc {
+	return func(grantInfo goidc.GrantInfo, _ *goidc.Client) goidc.TokenOptions {
+		opts := goidc.NewJWTTokenOptions(alg, 600)
+		return opts
+	}
+}
+
+func LogError(ctx context.Context, err error) {
+	slog.ErrorContext(ctx, "An error occurred while handling the request", slog.Any(logger.ErrorKey, err))
+}
+
+type errorPage struct {
+	Error string
+}
+
+func RenderError() goidc.RenderErrorFunc {
+	tpls, err := template.ParseFS(templates, "templates/error.gohtml")
+	if err != nil {
+		slog.Error("Unable to parse error template", slog.Any(logger.ErrorKey, err))
+	}
+
+	return func(w http.ResponseWriter, r *http.Request, err error) error {
+		w.WriteHeader(http.StatusOK)
+		err = tpls.Execute(w, errorPage{
+			Error: err.Error(),
+		})
+		if err != nil {
+			slog.Error("Unable to render error template", slog.Any(logger.ErrorKey, err))
+		}
+		return nil
+	}
+}
+
+func HttpClient(ctx context.Context) *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
 }

@@ -2,11 +2,9 @@ package oidc
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/rand"
+	"crypto/rsa"
 	"github.com/luikyv/go-oidc/pkg/goidc"
-	"io"
-	"log/slog"
-	"os"
 )
 
 var allScopes = []goidc.Scope{
@@ -19,38 +17,20 @@ var allScopes = []goidc.Scope{
 }
 
 type Config struct {
-	Issuer   string `mapstructure:"issuer"`
-	JWKSPath string `mapstructure:"jwksPath"`
+	Issuer string `mapstructure:"issuer"`
 }
 
-func (c *Config) PrivateJWKSFunc() goidc.JWKSFunc {
-	return func(ctx context.Context) (goidc.JSONWebKeySet, error) {
-		var jwks goidc.JSONWebKeySet
-
-		jwksFile, err := os.Open(c.JWKSPath)
-		if err != nil {
-			slog.Error("Unable to open JWKS file", slog.Any("error", err))
-
-			return jwks, err
-		}
-		defer func() {
-			if err := jwksFile.Close(); err != nil {
-				slog.Error("Unable to close JWKS file", slog.Any("error", err))
-			}
-		}()
-
-		jwksBytes, err := io.ReadAll(jwksFile)
-		if err != nil {
-			slog.Error("Unable to read JWKS file", slog.Any("error", err))
-
-			return jwks, err
-		}
-
-		if err := json.Unmarshal(jwksBytes, &jwks); err != nil {
-			slog.Error("Unable to unmarshal JWKS file", slog.Any("error", err))
-
-			return jwks, err
-		}
-		return jwks, nil
+// TODO Change this function in order to handle multiple key id.
+func (c *Config) privateJWKSFunc() goidc.JWKSFunc {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
+	jwks := goidc.JSONWebKeySet{
+		Keys: []goidc.JSONWebKey{{
+			KeyID:     "key",
+			Key:       privateKey,
+			Algorithm: "RS256",
+		}},
+	}
+	return func(_ context.Context) (goidc.JSONWebKeySet, error) {
+		return jwks, err
 	}
 }

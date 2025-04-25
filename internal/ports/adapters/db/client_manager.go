@@ -79,13 +79,17 @@ func toClientModel(entity *goidc.Client) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	expiresAt := sql.NullInt64{Valid: entity.ExpiresAt != nil}
+	if expiresAt.Valid {
+		expiresAt.Int64 = int64(*entity.ExpiresAt)
+	}
 	return &Client{
 		ID:                      entity.ID,
 		Secret:                  toSqlNullString(entity.Secret),
 		HashedSecret:            toSqlNullString(entity.HashedSecret),
 		HashedRegistrationToken: toSqlNullString(entity.HashedRegistrationToken),
 		RegistrationType:        toSqlNullString(string(entity.RegistrationType)),
-		ExpiresAt:               toSqlNullInt64(int64(*entity.ExpiresAt)),
+		ExpiresAt:               expiresAt,
 		ClientMetaInfo:          clientMetaInfo,
 	}, nil
 }
