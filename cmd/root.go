@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"github.com/maurofran/kernel/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"log/slog"
@@ -46,6 +47,7 @@ func init() {
 func initConfig() {
 	v := viper.NewWithOptions(viper.KeyDelimiter("_"),
 		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")))
+
 	if cfgFile != "" {
 		// Use config file from the flag.
 		v.SetConfigFile(cfgFile)
@@ -53,7 +55,7 @@ func initConfig() {
 		// Search config in home directory with name ".github.com/maurofran/iam" (without extension).
 		v.AddConfigPath(".")
 		v.AddConfigPath("./config")
-		v.AddConfigPath("$HOME/.config/iam")
+		v.AddConfigPath("$HOME/.config/auth")
 
 		v.SetConfigType("env")
 
@@ -67,14 +69,14 @@ func initConfig() {
 	if err := v.ReadInConfig(); err == nil {
 		slog.Info("Using config file", slog.String("file", viper.ConfigFileUsed()))
 		if err := v.Unmarshal(&config); err != nil {
-			slog.Error("Unable to parse config file", slog.Any("err", err))
+			slog.Error("Unable to parse config file", slog.Any(logger.ErrorKey, err))
 		}
 	} else {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &configFileNotFoundError) {
 			slog.Debug("No config file found")
 		} else {
-			slog.Error("Error reading config file", slog.Any("err", err))
+			slog.Error("Error reading config file", slog.Any(logger.ErrorKey, err))
 		}
 	}
 }
